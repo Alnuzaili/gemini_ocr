@@ -1,10 +1,10 @@
-import base64
 from flask import Flask, render_template, request, jsonify, url_for
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 from markupsafe import escape
-import json
+import markdown
+import mimetypes
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = "uploads/"
@@ -24,8 +24,9 @@ ALLOWED_INVOICE_TYPES = {
     "Al-Drsoni","Al-Othman","Al-Ifari","Almarai", "AlsafiDanone", "sadafco"
 }
 
-def allowed_file(mime_type):
-    # Check if the MIME type is in the allowed list
+def allowed_file(filename):
+    # Check if the file has one of the allowed extensions
+    mime_type = mimetypes.guess_type(filename)[0]
     return mime_type in ALLOWED_MIME_TYPES
 
 def selectInvoiceType(invoice_type):
@@ -41,7 +42,8 @@ def selectInvoiceType(invoice_type):
         except UnicodeDecodeError as e:
             return f"Encoding error while reading '{filename}': {str(e)}"
 
-@app.route("/", methods=["GET", "POST"])
+
+@app.route("/", methods=["GET","POST"])
 def index():
     model = genai.GenerativeModel(
         model_name="gemini-1.5-flash",
@@ -52,47 +54,29 @@ def index():
     )
 
     gemini_response = ""
-    parsed_json = ""
+    uploaded_file_url = ""
     try:
         if request.method == "POST":
-            data = request.json  # Parse JSON payload
-            base64_image = data.get("image")
-            invoice_type = data.get("invoice_type")
-
-            if not base64_image or not invoice_type:
-                return jsonify({"error": "Missing 'base64_image' or 'invoice_type' parameter."}), 400
-
-            if not selectInvoiceType(invoice_type):
-                return jsonify({"error": "Invalid invoice type. Please select a valid invoice type."}), 400
-
-            # Decode the base64 image and save it as a file
-            try:
-                image_data = base64.b64decode(base64_image)
-
-                file_path = os.path.join(app.config["UPLOAD_FOLDER"], "uploaded_image.png")
-                with open(file_path, "wb") as f:
-                    f.write(image_data)
-            except Exception as e:
-                return jsonify({"error": f"Error decoding base64 image: {str(e)}"}), 400
-
-            # Generate content using the model
-            prompt = selectInvoiceType(invoice_type)
-            file_to_upload = genai.upload_file(file_path)
-            response = model.generate_content([file_to_upload, "\n\n", prompt])
-            gemini_response = response.text
-            if '```json' in gemini_response:
-                # Extract JSON part after "```json" and strip newlines
-                json_part = gemini_response.split('```json')[-1].strip('` \n')
-                parsed_json = json.loads(json_part)
-                print(json.dumps(parsed_json, indent=4, ensure_ascii=False))
+            file = request.files.get("file")
+            if file:
+                if allowed_file(file.filename):
+                    if selectInvoiceType(request.form.get("invoice_type")):
+                        prompt = selectInvoiceType(request.form.get("invoice_type"))
+                        file_path = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
+                        file.save(file_path)
+                        file_to_upload = genai.upload_file(file_path)
+                        response = model.generate_content([file_to_upload, "\n\n", prompt])
+                        gemini_response = response.text
+                        gemini_response = markdown.markdown(gemini_response)
+                    else:
+                        gemini_response = "Invalid invoice type. Please select a valid invoice type."
+                else:
+                    gemini_response = "File type not allowed. Please upload a file of type: " + ", ".join(ALLOWED_MIME_TYPES)
             else:
-                print("Unexpected response format:")
-                print(gemini_response)
-
+                response = model.generate_content(prompt)
+                gemini_response = response.text
+                gemini_response = markdown.markdown(gemini_response)
     except Exception as e:
         # Handle errors and set an appropriate error message
         gemini_response = f"An error occurred: {str(e)}"
-    return parsed_json
-
-if __name__ == "__main__":
-    app.run(debug=True)
+    return render_template("index.html", gemini_response=gemini_response, uploaded_file_url=uploaded_file_url, ALLOWED_INVOICE_TYPES=ALLOWED_INVOICE_TYPES)
