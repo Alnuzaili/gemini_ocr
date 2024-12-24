@@ -5,35 +5,38 @@ import os
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Send base64 image and invoice type to API.")
-    parser.add_argument("-f", "--file", required=True, help="Path to the text file containing the base64-encoded image.")
+    parser = argparse.ArgumentParser(description="Send image (base64 or URL) and invoice type to API.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("-f", "--file", help="Path to the text file containing the base64-encoded image.")
+    group.add_argument("-l", "--url", help="Image URL.")
     parser.add_argument("-i", "--invoice_type", required=True, help="Invoice type string.")
-    parser.add_argument("-u", "--url", help="API endpoint URL.", default="http://localhost:5000/")
+    parser.add_argument("-u", "--api_url", help="API endpoint URL.", default="http://localhost:5000/")
     args = parser.parse_args()
 
-    # Read base64 image from the file
-    if not os.path.exists(args.file):
-        print(f"Error: File '{args.file}' not found.")
-        return
-
-    try:
-        with open(args.file, "r") as f:
-            base64_image = f.read().strip()  # Remove any leading/trailing whitespace
-    except Exception as e:
-        print(f"Error reading file: {e}")
-        return
-
     # Prepare the payload
-    payload = {
-        "image": base64_image,
-        "invoice_type": args.invoice_type
-    }
+    payload = {"invoice_type": args.invoice_type}
+
+    if args.file:
+        # Read base64 image from the file
+        if not os.path.exists(args.file):
+            print(f"Error: File '{args.file}' not found.")
+            return
+        try:
+            with open(args.file, "r") as f:
+                base64_image = f.read().strip()  # Remove any leading/trailing whitespace
+            payload["image"] = base64_image
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            return
+    elif args.url:
+        # Use the provided image URL
+        payload["image_url"] = args.url
 
     # Send POST request to the API
     try:
-        response = requests.post(args.url, json=payload)
+        response = requests.post(args.api_url, json=payload)
         if response.status_code == 200:
-            print(response.json())
+            print(json.dumps(response.json(), indent=4, ensure_ascii=False))
         else:
             print(f"Error: Received status code {response.status_code}")
             print("Response:", response.text)

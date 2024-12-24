@@ -1,10 +1,11 @@
 import base64
-from flask import Flask, render_template, request, jsonify, url_for
+from flask import Flask, request, jsonify
 import google.generativeai as genai
 import os
+import requests
 from dotenv import load_dotenv
-from markupsafe import escape
 import json
+import uuid
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = "uploads/"
@@ -13,15 +14,15 @@ load_dotenv()
 
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
-system_instruction = "You are a highly accurate and adaptable data extraction expert specializing in arabic invoice images. Given an invoice image, meticulously extract and return all relevant data in JSON format. Ensure the output is comprehensive, error-free, and formatted correctly, regardless of the image's layout or format. Adapt to different styles and structures to provide the most accurate and complete data extraction. If the image quality is poor, apply image enhancement techniques to improve clarity."
+system_instruction = "You are a highly accurate and adaptable data extraction expert specializing in Arabic invoice images. Given an invoice image, meticulously extract and return all relevant data in JSON format. Ensure the output is comprehensive, error-free, and formatted correctly, regardless of the image's layout or format. Adapt to different styles and structures to provide the most accurate and complete data extraction. If the image quality is poor, apply image enhancement techniques to improve clarity."
 
 ALLOWED_MIME_TYPES = {
-    "application/pdf","text/plain", "text/html", "text/csv", "text/xml", "text/rtf",
+    "application/pdf", "text/plain", "text/html", "text/csv", "text/xml", "text/rtf",
     "image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif",
 }
 
 ALLOWED_INVOICE_TYPES = {
-    "Al-Drsoni","Al-Othman","Al-Ifari","Almarai", "AlsafiDanone", "sadafco"
+    "Al-Drsoni", "Al-Othman", "Al-Ifari", "Almarai", "AlsafiDanone", "sadafco"
 }
 
 def allowed_file(mime_type):
@@ -57,23 +58,40 @@ def index():
         if request.method == "POST":
             data = request.json  # Parse JSON payload
             base64_image = data.get("image")
+            image_url = data.get("image_url")
             invoice_type = data.get("invoice_type")
 
-            if not base64_image or not invoice_type:
-                return jsonify({"error": "Missing 'base64_image' or 'invoice_type' parameter."}), 400
+            if not invoice_type:
+                return jsonify({"error": "Missing 'invoice_type' parameter."}), 400
 
             if not selectInvoiceType(invoice_type):
                 return jsonify({"error": "Invalid invoice type. Please select a valid invoice type."}), 400
 
-            # Decode the base64 image and save it as a file
-            try:
-                image_data = base64.b64decode(base64_image)
+            unique_filename = f"uploaded_image_{uuid.uuid4().hex}.png"
+            file_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_filename)
 
-                file_path = os.path.join(app.config["UPLOAD_FOLDER"], "uploaded_image.png")
-                with open(file_path, "wb") as f:
-                    f.write(image_data)
-            except Exception as e:
-                return jsonify({"error": f"Error decoding base64 image: {str(e)}"}), 400
+            if base64_image:
+                # Decode the base64 image and save it as a file
+                try:
+                    image_data = base64.b64decode(base64_image)
+                    with open(file_path, "wb") as f:
+                        f.write(image_data)
+                except Exception as e:
+                    return jsonify({"error": f"Error decoding base64 image: {str(e)}"}), 400
+            elif image_url:
+                # Download the image from the URL
+                try:
+                    response = requests.get(image_url, stream=True)
+                    if response.status_code == 200:
+                        with open(file_path, "wb") as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                    else:
+                        return jsonify({"error": f"Failed to download image from URL: HTTP {response.status_code}"}), 400
+                except Exception as e:
+                    return jsonify({"error": f"Error downloading image from URL: {str(e)}"}), 400
+            else:
+                return jsonify({"error": "Missing 'image' or 'image_url' parameter."}), 400
 
             # Generate content using the model
             prompt = selectInvoiceType(invoice_type)
